@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Ajedrez Maestro - Enroque y Al Paso</title>
+    <style>
+        :root { --blanco: #f0d9b5; --negro: #b58863; --highlight: rgba(123, 97, 255, 0.5); --danger: rgba(255, 0, 0, 0.6); }
+        body { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; background: #2c3e50; margin: 0; color: white; font-family: 'Segoe UI', sans-serif; }
+        .status { font-size: 24px; font-weight: bold; margin-bottom: 10px; height: 35px; }
+        .game-container { position: relative; padding: 25px; background: #1a252f; border-radius: 8px; box-shadow: 0 15px 35px rgba(0,0,0,0.6); }
+        .board { display: grid; grid-template-columns: repeat(8, 60px); grid-template-rows: repeat(8, 60px); border: 5px solid #34495e; }
+        .square { width: 60px; height: 60px; display: flex; justify-content: center; align-items: center; font-size: 40px; cursor: pointer; position: relative; }
+        .white { background-color: var(--blanco); }
+        .black { background-color: var(--negro); }
+        .can-move::after { content: ''; width: 15px; height: 15px; background: var(--highlight); border-radius: 50%; position: absolute; }
+        .selected { background-color: #7b61ff !important; }
+        .in-check { background-color: var(--danger) !important; }
+        .coords-v, .coords-h { position: absolute; font-size: 12px; color: #bdc3c7; display: flex; justify-content: space-around; }
+        .coords-v { left: 5px; top: 25px; flex-direction: column; height: 480px; }
+        .coords-h { bottom: 5px; left: 25px; width: 480px; }
+    </style>
+</head>
+<body>
+
+<div class="status" id="status">Turno: Blancas</div>
+<div class="game-container">
+    <div class="coords-v"><div>8</div><div>7</div><div>6</div><div>5</div><div>4</div><div>3</div><div>2</div><div>1</div></div>
+    <div id="board" class="board"></div>
+    <div class="coords-h"><div>A</div><div>B</div><div>C</div><div>D</div><div>E</div><div>F</div><div>G</div><div>H</div></div>
+</div>
+
+<script>
+    const boardElement = document.getElementById('board');
+    const statusElement = document.getElementById('status');
+    let turn = 'white', selectedSquare = null, availableMoves = [], isGameOver = false;
+
+    // Historial para Enroque y En Passant
+    let movedPieces = new Set(); // Guarda "r-c" de piezas que se han movido
+    let lastMove = null; // Para En Passant: {from, to, piece}
+
+    let gameState = [
+        ['r','n','b','q','k','b','n','r'],
+        ['p','p','p','p','p','p','p','p'],
+        ['','','','','','','',''], ['','','','','','','',''],
+        ['','','','','','','',''], ['','','','','','','',''],
+        ['P','P','P','P','P','P','P','P'],
+        ['R','N','B','Q','K','B','N','R']
+    ];
+
+    const symbols = {'r':'♜','n':'♞','b':'♝','q':'♛','k':'♚','p':'♟','R':'♖','N':'♘','B':'♗','Q':'♕','K':'♔','P':'♙','':''};
+
+    function render() {
+        boardElement.innerHTML = '';
+        const kingPos = findKing(turn);
+        const inCheck = isSquareAttacked(kingPos.r, kingPos.c, turn === 'white' ? 'black' : 'white');
+
+        for (let r = 0; r < 8; r++) {
+            for (let c = 0; c < 8; c++) {
+                const sq = document.createElement('div');
+                sq.className = `square ${(r+c)%2===0 ? 'white' : 'black'}`;
+                sq.textContent = symbols[gameState[r][c]];
+                if (selectedSquare?.r === r && selectedSquare?.c === c) sq.classList.add('selected');
+                if (availableMoves.some(m => m.r === r && m.c === c)) sq.classList.add('can-move');
+                if (inCheck && gameState[r][c].toLowerCase() === 'k' && (gameState[r][c] === 'K' ? 'white' : 'black') === turn) sq.classList.add('in-check');
+                sq.onclick = () => handleClick(r, c);
+                boardElement.appendChild(sq);
+            }
+        }
+    }
+
+    function handleClick(r, c) {
+        if (isGameOver) return;
+        const piece = gameState[r][c];
+        const isWhite = piece !== '' && piece === piece.toUpperCase();
+        const move = availableMoves.find(m => m.r === r && m.c === c);
+
+        if (selectedSquare && move) {
+            executeMove(selectedSquare.r, selectedSquare.c, r, c, move.type);
+            return;
+        }
+
+        if (piece !== '' && ((turn === 'white') === isWhite)) {
+            selectedSquare = {r, c};
+            availableMoves = getLegalMovesFiltered(r, c);
+            render();
+        }
+    }
+
+    function executeMove(fR, fC, tR, tC, type) {
+        const piece = gameState[fR][fC];
+        
+        // Lógica En Passant: Eliminar peón capturado
+        if (type === 'enPassant') gameState[fR][tC] = '';
+
+        // Lógica Enroque: Mover la torre
+        if (type === 'castle') {
+            const isLong = tC < fC;
+            const rookCol = isLong ? 0 : 7;
+            const newRookCol = isLong ? 3 : 5;
+            gameState[fR][newRookCol] = gameState[fR][rookCol];
+            gameState[fR][rookCol] = '';
+        }
+
+        gameState[tR][tC] = piece;
+        gameState[fR][fC] = '';
+        
+        // Registrar movimientos para enroque
+        movedPieces.add(`${fR}-${fC}`);
+        lastMove = { from: {r:fR, c:fC}, to: {r:tR, c:tC}, piece: piece.toLowerCase() };
+        
+        selectedSquare = null; availableMoves = [];
+        turn = turn === 'white' ? 'black' : 'white';
+        checkStatus();
+        render();
+    }
+
+    function getBasicMoves(r, c, ignoreCastling = false) {
+        let moves = [];
+        const piece = gameState[r][c];
+        const type = piece.toLowerCase();
+        const isWhite = piece === piece.toUpperCase();
+        const enemy = isWhite ? 'black' : 'white';
+
+        if (type === 'p') {
+            let dir = isWhite ? -1 : 1;
+            if (gameState[r+dir]?.[c] === '') {
+                moves.push({r: r+dir, c});
+                if ((isWhite ? r===6 : r===1) && gameState[r+2*dir][c] === '') moves.push({r: r+2*dir, c});
+            }
+            // Capturas normales y En Passant
+            [-1, 1].forEach(dc => {
+                let target = gameState[r+dir]?.[c+dc];
+                if (target && (target === target.toUpperCase()) !== isWhite) moves.push({r: r+dir, c: c+dc});
+                
+                // Regla En Passant
+                if (lastMove && lastMove.piece === 'p' && Math.abs(lastMove.from.r - lastMove.to.r) === 2) {
+                    if (lastMove.to.r === r && lastMove.to.c === c+dc) moves.push({r: r+dir, c: c+dc, type: 'enPassant'});
+                }
+            });
+        } else {
+            const dirs = {
+                'r':[[0,1],[0,-1],[1,0],[-1,0]], 'b':[[1,1],[1,-1],[-1,1],[-1,-1]],
+                'q':[[0,1],[0,-1],[1,0],[-1,0],[1,1],[1,-1],[-1,1],[-1,-1]],
+                'n':[[2,1],[2,-1],[-2,1],[-2,-1],[1,2],[1,-2],[-1,2],[-1,-2]],
+                'k':[[0,1],[0,-1],[1,0],[-1,0],[1,1],[1,-1],[-1,1],[-1,-1]]
+            }[type];
+
+            dirs.forEach(d => {
+                let nr = r + d[0], nc = c + d[1];
+                while (nr >= 0 && nr < 8 && nc >= 0 && nc < 8) {
+                    if (gameState[nr][nc] === '') {
+                        moves.push({r: nr, c: nc});
+                        if (type === 'n' || type === 'k') break;
+                    } else {
+                        if ((gameState[nr][nc] === gameState[nr][nc].toUpperCase()) !== isWhite) moves.push({r: nr, c: nc});
+                        break;
+                    }
+                    nr += d[0]; nc += d[1];
+                }
+            });
+
+            // Lógica de Enroque
+            if (type === 'k' && !ignoreCastling && !movedPieces.has(`${r}-${c}`)) {
+                if (!isSquareAttacked(r, c, enemy)) {
+                    [0, 7].forEach(rookCol => {
+                        if (!movedPieces.has(`${r}-${rookCol}`) && gameState[r][rookCol].toLowerCase() === 'r') {
+                            const step = rookCol === 0 ? -1 : 1;
+                            let canCastle = true;
+                            for (let col = c + step; col !== rookCol; col += step) {
+                                if (gameState[r][col] !== '' || (Math.abs(c-col) <= 2 && isSquareAttacked(r, col, enemy))) {
+                                    canCastle = false; break;
+                                }
+                            }
+                            if (canCastle) moves.push({r, c: c + (step*2), type: 'castle'});
+                        }
+                    });
+                }
+            }
+        }
+        return moves;
+    }
+
+    function getLegalMovesFiltered(r, c) {
+        return getBasicMoves(r, c).filter(m => {
+            const source = gameState[r][c], target = gameState[m.r][m.c];
+            gameState[m.r][m.c] = source; gameState[r][c] = '';
+            const kp = findKing(turn), safe = !isSquareAttacked(kp.r, kp.c, turn === 'white' ? 'black' : 'white');
+            gameState[r][c] = source; gameState[m.r][m.c] = target;
+            return safe;
+        });
+    }
+
+    function isSquareAttacked(r, c, attackerColor) {
+        for (let row = 0; row < 8; row++) {
+            for (let col = 0; col < 8; col++) {
+                const p = gameState[row][col];
+                if (p && (p === p.toUpperCase() ? 'white' : 'black') === attackerColor) {
+                    if (getBasicMoves(row, col, true).some(m => m.r === r && m.c === c)) return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    function findKing(color) {
+        const t = color === 'white' ? 'K' : 'k';
+        for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++) if (gameState[r][c] === t) return {r, c};
+    }
+
+    function checkStatus() {
+        let moves = [];
+        for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++) {
+            if (gameState[r][c] && (gameState[r][c] === gameState[r][c].toUpperCase() ? 'white' : 'black') === turn) {
+                moves.push(...getLegalMovesFiltered(r, c));
+            }
+        }
+        const kp = findKing(turn), inCheck = isSquareAttacked(kp.r, kp.c, turn === 'white' ? 'black' : 'white');
+        if (moves.length === 0) {
+            isGameOver = true;
+            statusElement.textContent = inCheck ? "JAQUE MATE" : "TABLAS";
+        } else {
+            statusElement.textContent = `Turno: ${turn === 'white' ? 'Blancas' : 'Negras'}${inCheck ? ' - ¡JAQUE!' : ''}`;
+        }
+    }
+
+    render();
+</script>
+</body>
+</html>
